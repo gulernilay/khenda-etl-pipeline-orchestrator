@@ -6,18 +6,19 @@ Production-grade API client for Source 1.
 
 This module handles:
 - Authenticated GET requests
+- Optional date range filtering (from / to)
 - Retry logic (network failures, 429 & 5xx responses)
 - Timeout control
 - Response validation
 - JSON parsing safety
 - Error reporting with structured logging
 
-
+Author: Chef Seasons – Data Engineering Team
 """
 
 import requests
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from config.settings import API_1_URL, API_1_TOKEN
 from utils.logger import log
 
@@ -50,19 +51,26 @@ def _build_headers() -> Dict[str, str]:
 # ------------------------------------------------------------
 # MAIN API CALL
 # ------------------------------------------------------------
-def fetch_api_1_data() -> List[Dict[str, Any]]:
+def fetch_api_1_data(date_from: Optional[str] = None,
+                     date_to: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Fetch data from API Source 1 with retry strategy.
+    Fetch data from API Source 1 with retry strategy and optional
+    date range filtering.
 
-    Workflow:
-        1. Try HTTP GET
-        2. If fails → retry (max=3)
-        3. Validate status code
-        4. Parse JSON response
-        5. Return data as list of dicts
+    Date Filtering Contract:
+        - If both date_from and date_to are provided, they will be sent
+          as query parameters, typically:
+              ?from=YYYY-MM-DD&to=YYYY-MM-DD
+
+        - Example:
+            fetch_api_1_data("2025-12-01", "2025-12-07")
+
+    Args:
+        date_from (str, optional): Start date (YYYY-MM-DD)
+        date_to (str, optional): End date (YYYY-MM-DD)
 
     Returns:
-        List[Dict[str, Any]]: Parsed API response.
+        list[dict]: Parsed API response.
 
     Raises:
         RuntimeError: If maximum retry attempts fail.
@@ -71,13 +79,19 @@ def fetch_api_1_data() -> List[Dict[str, Any]]:
     url = API_1_URL
     headers = _build_headers()
 
+    params: Dict[str, Any] = {}
+    if date_from and date_to:
+        params["from"] = date_from
+        params["to"] = date_to
+
     for attempt in range(1, MAX_RETRY + 1):
         try:
-            log(f" [API1] Attempt {attempt}/{MAX_RETRY} → GET {url}")
+            log(f"🌐 [API1] Attempt {attempt}/{MAX_RETRY} → GET {url} with params {params}")
 
             response = requests.get(
                 url,
                 headers=headers,
+                params=params,
                 timeout=TIMEOUT_SECONDS
             )
 
@@ -88,12 +102,12 @@ def fetch_api_1_data() -> List[Dict[str, Any]]:
                 except Exception:
                     raise RuntimeError("API 1 returned non-JSON response.")
 
-                log(f" [API1] Successfully fetched {len(data)} records.")
+                log(f"📥 [API1] Successfully fetched {len(data)} records.")
                 return data
 
             # Handle throttling & retryable errors
             if response.status_code in (429, 500, 502, 503, 504):
-                log(f" [API1] Retryable error {response.status_code}, waiting...")
+                log(f"⚠️ [API1] Retryable error {response.status_code}, waiting...")
                 time.sleep(RETRY_DELAY_SECONDS)
                 continue
 
@@ -103,12 +117,12 @@ def fetch_api_1_data() -> List[Dict[str, Any]]:
             )
 
         except requests.Timeout:
-            log(" [API1] Timeout occurred, retrying...")
+            log("⏳ [API1] Timeout occurred, retrying...")
             time.sleep(RETRY_DELAY_SECONDS)
             continue
 
         except requests.RequestException as e:
-            log(f" [API1] Network error: {e}, retrying...")
+            log(f"❌ [API1] Network error: {e}, retrying...")
             time.sleep(RETRY_DELAY_SECONDS)
             continue
 

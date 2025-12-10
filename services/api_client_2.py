@@ -4,41 +4,37 @@ api_client_2.py
 
 Production-grade API client for Source 2.
 
-This module includes:
-- Authenticated GET requests
-- Query parameter support
-- Pagination handling (if API returns paginated responses)
-- Retry strategy for throttling and network issues
-- Timeout control
-- Safe JSON parsing and structured error reporting
+Features:
+- Pagination support (page=1,2,3...)
+- Date range filtering: ?from=YYYY-MM-DD&to=YYYY-MM-DD
+- Retry mechanism for network/5xx errors
+- Timeout protection
+- Structured logging
+- JSON parsing validation
 
+Author: Chef Seasons – Data Engineering Team
 """
 
 import requests
 import time
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Any, Optional
 from config.settings import API_2_URL, API_2_TOKEN
 from utils.logger import log
 
 
-# ------------------------------------------------------------
-# CONFIGURATION
-# ------------------------------------------------------------
-TIMEOUT_SECONDS = 20
+# -----------------------------
+# CONFIG
+# -----------------------------
+TIMEOUT_SECONDS = 15
 MAX_RETRY = 3
 RETRY_DELAY_SECONDS = 2
+PAGE_SIZE = 200  # API limitine göre ayarlanabilir
 
 
-# ------------------------------------------------------------
-# HEADER BUILDER
-# ------------------------------------------------------------
+# -----------------------------
+# HEADERS
+# -----------------------------
 def _build_headers() -> Dict[str, str]:
-    """
-    Construct request headers including authentication token.
-
-    Returns:
-        dict: Standard HTTP headers.
-    """
     return {
         "Authorization": f"Bearer {API_2_TOKEN}",
         "Accept": "application/json",
@@ -46,120 +42,90 @@ def _build_headers() -> Dict[str, str]:
     }
 
 
-# ------------------------------------------------------------
-# PAGINATION HANDLER
-# ------------------------------------------------------------
-def _extract_pagination_info(json_data: Dict[str, Any]) -> Optional[str]:
-    """
-    Extract next-page URL from API response.
-
-    Expected API structure example:
-    {
-        "data": [...],
-        "next": "https://api.example.com/resource?page=2"
-    }
-
-    Args:
-        json_data (dict): Full API response.
-
-    Returns:
-        Optional[str]: URL to next page if exists.
-    """
-    if isinstance(json_data, dict) and "next" in json_data:
-        return json_data["next"]
-
-    return None
-
-
-# ------------------------------------------------------------
+# -----------------------------
 # MAIN FETCH FUNCTION
-# ------------------------------------------------------------
-def fetch_api_2_data(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+# -----------------------------
+def fetch_api_2_data(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
-    Fetch data from API Source 2 with support for pagination
-    and retry-aware network safety.
+    Fetch data from API 2 with pagination and date filtering.
 
-    Args:
-        params (dict, optional): Query parameters to attach.
+    Example params:
+        {
+            "from": "2025-12-01",
+            "to": "2025-12-07"
+        }
+
+    Behavior:
+        - Keeps requesting pages until API returns empty list.
+        - Automatically merges all pages into a single dataset.
 
     Returns:
         list[dict]: Combined data from all pages.
 
     Raises:
-        RuntimeError: On final failure after retries.
+        RuntimeError: On repeated failures.
     """
 
-    url = API_2_URL
     headers = _build_headers()
     all_data: List[Dict[str, Any]] = []
 
-    current_url = url
-    current_params = params or {}
+    page = 1
+    params = params.copy() if params else {}
+    params["pageSize"] = PAGE_SIZE
 
-    while current_url:
+    while True:
+        params["page"] = page
+
         for attempt in range(1, MAX_RETRY + 1):
             try:
-                log(f"🌐 [API2] Attempt {attempt}/{MAX_RETRY} → GET {current_url}")
+                log(f"🌐 [API2] Fetching page {page} with params {params}")
 
                 response = requests.get(
-                    current_url,
+                    API_2_URL,
                     headers=headers,
-                    params=current_params,
+                    params=params,
                     timeout=TIMEOUT_SECONDS
                 )
 
-                # ----- SUCCESS CASE -----
+                # SUCCESS
                 if response.status_code == 200:
                     try:
-                        json_payload = response.json()
+                        data = response.json()
                     except Exception:
-                        raise RuntimeError("API 2 returned non-JSON response.")
+                        raise RuntimeError("API 2 returned invalid JSON")
 
-                    # Extract data array
-                    if "data" not in json_payload:
-                        raise RuntimeError("API 2 response missing `data` field.")
+                    row_count = len(data)
+                    log(f"📥 [API2] Page {page} returned {row_count} records.")
 
-                    data_chunk = json_payload["data"]
-                    all_data.extend(data_chunk)
+                    if row_count == 0:
+                        log("📘 [API2] No more pages. Pagination completed.")
+                        return all_data
 
-                    log(f" [API2] Retrieved {len(data_chunk)} records (Total so far: {len(all_data)}).")
+                    all_data.extend(data)
+                    break  # exit retry loop → go to next page
 
-                    # Pagination handling
-                    next_url = _extract_pagination_info(json_payload)
-
-                    if next_url:
-                        current_url = next_url
-                        current_params = {}  # pagination URL already contains params
-                        log(f" [API2] Next page detected: {next_url}")
-                    else:
-                        current_url = None
-
-                    break  # success → exit retry loop
-
-                # Retryable errors
+                # RETRYABLE ERRORS
                 if response.status_code in (429, 500, 502, 503, 504):
-                    log(f"️ [API2] HTTP {response.status_code}, retrying...")
+                    log(f"⚠️ [API2] Retryable error {response.status_code}, waiting and retrying...")
                     time.sleep(RETRY_DELAY_SECONDS)
                     continue
 
-                # Hard failure
-                raise RuntimeError(
-                    f"API 2 failed with HTTP {response.status_code}: {response.text}"
-                )
+                # NON-RETRYABLE
+                raise RuntimeError(f"API 2 failed with HTTP {response.status_code}: {response.text}")
 
             except requests.Timeout:
-                log(" [API2] Timeout occurred, retrying...")
+                log(f"⏳ [API2] Timeout on page {page}, retrying...")
                 time.sleep(RETRY_DELAY_SECONDS)
                 continue
 
             except requests.RequestException as e:
-                log(f" [API2] Network error: {e}, retrying...")
+                log(f"❌ [API2] Network error: {e}, retrying...")
                 time.sleep(RETRY_DELAY_SECONDS)
                 continue
 
         else:
-            # If loop completes without break → retry limit reached
-            raise RuntimeError("API 2: Maximum retry attempts exceeded.")
+            # retry loop exhausted
+            raise RuntimeError(f"API 2: Maximum retry attempts exceeded on page {page}")
 
-    log(f" [API2] Completed fetching. Final record count: {len(all_data)}")
-    return all_data
+        # next page
+        page += 1

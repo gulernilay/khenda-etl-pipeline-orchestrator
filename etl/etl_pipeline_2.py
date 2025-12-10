@@ -1,83 +1,97 @@
 """
-etl_pipeline_1.py
+etl_pipeline_2.py
 =================
 
-Production ETL pipeline for API Source 1.
+Production ETL pipeline for API Source 2.
 
-This pipeline performs:
-1. Extraction: Pull raw data from API Client 1
-2. Transformation: Apply standardized cleaning & validation
-3. Loading: Persist processed data into SQL Server
+Responsibilities:
+    1. Extraction:
+        - Fetch data from a paginated API endpoint
+        - Filter results by a date window (date_from → date_to)
+    2. Transformation:
+        - Drop empty/invalid records
+        - Normalize date fields
+        - Validate mandatory schema fields
+    3. Load:
+        - Insert processed data into SQL Server target table (khenda_hygiene)
 
-Core Objectives:
-- Ensure robust data quality
-- Prevent malformed payloads from reaching the database
-- Provide detailed logging for audit & debugging
-- Maintain idempotent ETL behavior (DB-side MERGE or INSERT logic)
-
-
+Author: Chef Seasons – Data Engineering Team
 """
 
-from services.api_client_1 import fetch_api_1_data
-from services.db_service import insert_into_table_1
+from services.api_client_2 import fetch_api_2_data
+from services.db_service import insert_into_table_2
 from etl.common_transforms import (
-    clean_column_names,
-    normalize_dates,
     drop_empty_rows,
-    validate_schema
+    normalize_dates,
+    validate_schema,
+    clean_column_names
 )
 from utils.logger import log
 
 
-def run_pipeline():
+def run_pipeline(date_from: str, date_to: str):
     """
-    Execute ETL Pipeline 1 with full error isolation and logging.
+    Execute ETL Pipeline 2 for a specific date range.
+
+    Args:
+        date_from (str): Start date (YYYY-MM-DD)
+        date_to (str): End date (YYYY-MM-DD)
 
     Returns:
-        int: Number of rows successfully inserted into SQL Server.
+        int: Number of successfully inserted/updated rows.
 
     Raises:
-        RuntimeError: If extraction, transformation or loading fails.
+        RuntimeError: For extraction or transformation failures.
     """
 
-    log(" [ETL1] Pipeline 1 started")
+    log(f"🚀 [ETL2] Pipeline 2 started for window {date_from} → {date_to}")
 
     try:
         # ------------------------------------------------------------
         # 1. EXTRACT
         # ------------------------------------------------------------
-        raw_data = fetch_api_1_data()
-        log(f" [ETL1] Extracted {len(raw_data)} raw records from API 1")
+        params = {
+            "from": date_from,
+            "to": date_to
+        }
+
+        raw_data = fetch_api_2_data(params=params)
+        log(f"📥 [ETL2] Extracted {len(raw_data)} raw records from API 2")
+
+        if not raw_data:
+            log("⚠️ [ETL2] No data found from API 2 for this window. Pipeline ending cleanly.")
+            return 0
 
         # ------------------------------------------------------------
         # 2. TRANSFORM
         # ------------------------------------------------------------
-        if not raw_data:
-            log(" [ETL1] No data returned from API 1. Pipeline will end.")
-            return 0
-
         cleaned = clean_column_names(raw_data)
         cleaned = drop_empty_rows(cleaned)
         cleaned = normalize_dates(cleaned)
 
+        # hygiene tablosu için expected schema:
         validate_schema(
             cleaned,
-            required_fields=["id", "name", "created_at"]
+            required_fields=[
+                "id",
+                "hygieneid",
+                "datetime",
+                "valid",
+                "duration"
+            ]
         )
 
-        log(f" [ETL1] Transformation phase completed. Total usable rows: {len(cleaned)}")
+        log(f"🔧 [ETL2] Transformation completed. Valid rows: {len(cleaned)}")
 
         # ------------------------------------------------------------
         # 3. LOAD
         # ------------------------------------------------------------
-        inserted_count = insert_into_table_1(cleaned)
-        log(f" [ETL1] Successfully inserted {inserted_count} rows into TABLE_1")
+        inserted = insert_into_table_2(cleaned)
+        log(f"💾 [ETL2] Inserted/updated approx. {inserted} records into khenda_hygiene")
 
-        log(" [ETL1] Pipeline 1 completed successfully")
-        return inserted_count
+        log("✅ [ETL2] Pipeline 2 completed successfully")
+        return inserted
 
     except Exception as exc:
-        # Critical error, pipeline fails
-        log(f" [ETL1] Pipeline 1 failed: {exc}")
-        raise RuntimeError(f"ETL Pipeline 1 failed: {exc}")
-
+        log(f"❌ [ETL2] Pipeline 2 failed: {exc}", level="error")
+        raise RuntimeError(f"ETL Pipeline 2 failed: {exc}")
