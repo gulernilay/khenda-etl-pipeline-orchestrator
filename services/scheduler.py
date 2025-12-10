@@ -21,7 +21,9 @@ from apscheduler.triggers.cron import CronTrigger
 from etl.etl_pipeline_1 import run_pipeline as run_pipeline_1
 from etl.etl_pipeline_1 import run_pipeline as run_pipeline_2
 from utils.logger import log
+from services.etl_monitor import ETLMonitor
 
+monitor = ETLMonitor()
 
 def get_last_7_days_window() -> tuple[str, str]:
     """
@@ -44,27 +46,23 @@ def get_last_7_days_window() -> tuple[str, str]:
 
 
 def run_pipeline_1_job():
-    """
-    Scheduled job wrapper for Pipeline 1.
-
-    It calculates the last 7 days window and calls ETL Pipeline 1
-    with this date range.
-    """
     date_from, date_to = get_last_7_days_window()
-    log(f" [Scheduler] Triggering Pipeline 1 for window {date_from} → {date_to}")
-    run_pipeline_1(date_from, date_to)
+    monitor.pipeline1.start()
+    try:
+        rows = run_pipeline_1(date_from, date_to)
+        monitor.pipeline1.finish_success(rows)
+    except Exception as exc:
+        monitor.pipeline1.finish_failure(str(exc))
 
 
 def run_pipeline_2_job():
-    """
-    Scheduled job wrapper for Pipeline 2.
-
-    It calculates the last 7 days window and calls ETL Pipeline 2
-    with this date range.
-    """
     date_from, date_to = get_last_7_days_window()
-    log(f" [Scheduler] Triggering Pipeline 2 for window {date_from} → {date_to}")
-    run_pipeline_2(date_from, date_to)
+    monitor.pipeline2.start()
+    try:
+        rows = run_pipeline_2(date_from, date_to)
+        monitor.pipeline2.finish_success(rows)
+    except Exception as exc:
+        monitor.pipeline2.finish_failure(str(exc))
 
 
 def start_scheduler():
