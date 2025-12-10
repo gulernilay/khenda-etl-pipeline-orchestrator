@@ -1,0 +1,5 @@
+-- Placeholder SQL file for initial table creation scripts.
+-- Future commits will include:
+--  - staging tables
+--  - final tables
+--  - merge strategies
