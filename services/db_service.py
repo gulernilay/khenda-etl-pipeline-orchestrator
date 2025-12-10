@@ -126,7 +126,7 @@ def insert_into_table_1(rows: List[Dict[str, Any]]) -> int:
 
 def insert_into_table_2(rows: List[Dict[str, Any]]) -> int:
     """
-    Inserts data from ETL Pipeline 2 into SQL Table 2.
+    Inserts data from ETL Pipeline 2 into khenda_hygiene table.
 
     Args:
         rows (list[dict])
@@ -134,5 +134,5 @@ def insert_into_table_2(rows: List[Dict[str, Any]]) -> int:
     Returns:
         int: Number of rows inserted.
     """
-    TABLE_NAME = "ChefsAI.dbo.Table2_ETL"
+    TABLE_NAME = "ChefsAI.dbo.khenda_hygiene"
     return _insert_dynamic(TABLE_NAME, rows)
